@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard OTD & Gantt 2026</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.25/jspdf.plugin.autotable.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;900&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #f8fafc; color: #334155; }
+        .glass-card { background: white; border: 1px solid #e2e8f0; border-radius: 12px; }
+        thead th { background-color: #f1f5f9 !important; color: #64748b !important; font-size: 11px; text-transform: uppercase; font-weight: 700; }
+        .table-container { max-height: 550px; overflow-y: auto; }
+        .status-badge { padding: 4px 8px; border-radius: 6px; font-size: 10px; font-weight: 800; }
+        /* Estilização do select de turbinas */
+        #filterTurbina { max-height: 200px; }
+    </style>
+</head>
+<body class="p-6">
+
+    <div class="max-w-[1600px] mx-auto">
+        <header class="flex flex-col md:flex-row justify-between items-center mb-8 gap-4">
+            <div>
+                <h1 class="text-2xl font-black text-slate-800 tracking-tight">PLANEJAMENTO OTD & GANTT</h1>
+                <p class="text-slate-500 text-sm font-medium italic">Regra de OTD: Compliant entre 170 e 210 dias</p>
+            </div>
+            <div class="flex flex-wrap gap-3">
+                <button onclick="gerarPDF(true)" class="bg-slate-100 text-slate-700 px-4 py-2 rounded-lg border border-slate-300 hover:bg-slate-200 font-bold text-xs flex items-center gap-2">
+                    📊 PDF COM GANTT
+                </button>
+                <button onclick="gerarPDF(false)" class="bg-white text-slate-700 px-4 py-2 rounded-lg border border-slate-300 hover:bg-slate-50 font-bold text-xs">
+                    📄 PDF SIMPLES
+                </button>
+                <label class="bg-blue-600 text-white px-6 py-2 rounded-lg cursor-pointer hover:bg-blue-700 shadow-lg font-bold text-xs">
+                    <span>UPLOAD EXCEL</span>
+                    <input type="file" id="fileInput" class="hidden" accept=".xlsx, .csv">
+                </label>
+            </div>
+        </header>
+
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+            <div class="glass-card p-4 border-l-4 border-slate-300">
+                <label class="block text-[10px] font-black text-slate-400 uppercase mb-2">Complexo</label>
+                <select id="filterComplexo" onchange="render()" class="w-full bg-transparent font-bold outline-none text-sm"></select>
+            </div>
+            
+            <div class="glass-card p-4 border-l-4 border-blue-500">
+                <label class="block text-[10px] font-black text-blue-500 uppercase mb-2">Análise de Atividade</label>
+                <select id="filterAtividade" onchange="render()" class="w-full bg-transparent font-black outline-none text-sm">
+                    <option value="anual">Última 25 X Anual 26</option>
+                    <option value="semestral">Anual 26 X Semestral 26</option>
+                </select>
+            </div>
+
+            <div class="glass-card p-4 border-l-4 border-slate-300">
+                <label class="block text-[10px] font-black text-slate-400 uppercase mb-2 italic">Pesquisar Turbina (247)</label>
+                <input type="text" id="searchTurbina" oninput="render()" placeholder="Ex: JOA05-06..." class="w-full bg-slate-50 rounded p-1 text-sm font-bold outline-none border border-slate-100 focus:border-blue-300">
+            </div>
+
+            <div class="flex items-center justify-around glass-card p-4">
+                <div class="text-center">
+                    <p class="text-[10px] font-bold text-slate-400 uppercase">Média OTD</p>
+                    <p id="kpiAvg" class="text-xl font-black text-blue-600">0</p>
+                </div>
+                <button onclick="resetar()" class="text-[10px] font-black text-slate-300 hover:text-red-500 uppercase">Resetar</button>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 xl:grid-cols-5 gap-8">
+            <div class="xl:col-span-1 space-y-4">
+                <div onclick="filtrarStatus('COMPLIANT')" class="glass-card p-6 cursor-pointer border-b-4 border-green-500 hover:bg-green-50 transition-all">
+                    <p class="text-[10px] font-bold text-slate-400 uppercase">Compliant</p>
+                    <p id="kpiComp" class="text-3xl font-black text-green-600">0</p>
+                </div>
+                <div onclick="filtrarStatus('NOT COMPLIANT')" class="glass-card p-6 cursor-pointer border-b-4 border-red-500 hover:bg-red-50 transition-all">
+                    <p class="text-[10px] font-bold text-slate-400 uppercase">Not Compliant</p>
+                    <p id="kpiNot" class="text-3xl font-black text-red-600">0</p>
+                </div>
+                <div class="glass-card p-6 flex flex-col items-center justify-center">
+                    <canvas id="chartOTD" height="150"></canvas>
+                </div>
+            </div>
+
+            <div class="xl:col-span-4 glass-card overflow-hidden">
+                <div class="table-container">
+                    <table id="mainTable" class="w-full text-left border-collapse">
+                        <thead class="sticky top-0 z-20 shadow-sm">
+                            <tr>
+                                <th class="p-4 border-b">Seq.</th>
+                                <th class="p-4 border-b">Complexo</th>
+                                <th class="p-4 border-b">Turbina</th>
+                                <th id="labelA" class="p-4 border-b">Data A</th>
+                                <th id="labelB" class="p-4 border-b">Data B</th>
+                                <th class="p-4 border-b text-center bg-slate-50">Dias</th>
+                                <th class="p-4 border-b">Status</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tableBody" class="text-sm divide-y divide-slate-100">
+                            <tr><td colspan="7" class="p-20 text-center text-slate-300 font-bold uppercase">Aguardando dados...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let rawData = [];
+        let statusFilter = 'todos';
+        let chart;
+
+        document.getElementById('fileInput').addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            const data = await file.arrayBuffer();
+            const workbook = XLSX.read(data, { cellDates: true });
+            const sheet = workbook.SheetNames.find(n => n.includes('Teste_Sequencia OTD Válida')) || workbook.SheetNames[0];
+            const json = XLSX.utils.sheet_to_json(workbook.Sheets[sheet], { defval: "" });
+            process(json);
+        });
+
+        function process(json) {
+            rawData = json.filter(r => r.Sequência || r.__EMPTY_6).map(r => {
+                const d1 = r['Ultima Lubrificação 25'] || r.__EMPTY_9;
+                const d2 = r['Anual - Lubrificação 26'] || r.__EMPTY_10;
+                const d3 = r[' Semestral - Lubrificação 26'] || r.__EMPTY_11;
+                const dAnual = calc(d1, d2);
+                const dSemestral = calc(d2, d3);
+
+                return {
+                    seq: r.Sequência || r.__EMPTY_6,
+                    complexo: r.Complexo || r.__EMPTY_1 || "Chapada",
+                    turbina: String(r.Turbina || r.__EMPTY_7).trim(),
+                    data_ultima: d1, data_anual: d2, data_semestral: d3,
+                    anual_dias: dAnual, anual_status: check(dAnual),
+                    semestral_dias: dSemestral, semestral_status: check(dSemestral)
+                };
+            }).filter(r => r.seq !== "Sequência" && r.turbina !== "undefined");
+
+            const comps = [...new Set(rawData.map(d => d.complexo))].sort();
+            const selComp = document.getElementById('filterComplexo');
+            selComp.innerHTML = '<option value="todos">Todos os Complexos</option>';
+            comps.forEach(c => selComp.innerHTML += `<option value="${c}">${c}</option>`);
+
+            render();
+        }
+
+        function calc(a, b) {
+            if (!a || !b) return 0;
+            return Math.ceil(Math.abs(new Date(b) - new Date(a)) / (1000 * 60 * 60 * 24));
+        }
+
+        function check(d) { return (d < 170 || d > 210) ? 'NOT COMPLIANT' : 'COMPLIANT'; }
+
+        function render() {
+            const complexo = document.getElementById('filterComplexo').value;
+            const atividade = document.getElementById('filterAtividade').value;
+            const busca = document.getElementById('searchTurbina').value.toUpperCase();
+
+            document.getElementById('labelA').innerText = atividade === 'anual' ? "Última 25" : "Anual 26";
+            document.getElementById('labelB').innerText = atividade === 'anual' ? "Anual 26" : "Semestral 26";
+
+            let filtered = rawData.filter(d => {
+                const matchComp = (complexo === 'todos' || d.complexo === complexo);
+                const matchSearch = d.turbina.toUpperCase().includes(busca);
+                return matchComp && matchSearch;
+            });
+
+            const cCount = filtered.filter(d => d[`${atividade}_status`] === 'COMPLIANT').length;
+            const nCount = filtered.filter(d => d[`${atividade}_status`] === 'NOT COMPLIANT').length;
+            document.getElementById('kpiComp').innerText = cCount;
+            document.getElementById('kpiNot').innerText = nCount;
+
+            const avg = (filtered.reduce((acc, curr) => acc + curr[`${atividade}_dias`], 0) / filtered.length).toFixed(1);
+            document.getElementById('kpiAvg').innerText = isNaN(avg) ? 0 : avg;
+
+            let finalData = statusFilter === 'todos' ? filtered : filtered.filter(d => d[`${atividade}_status`] === statusFilter);
+
+            document.getElementById('tableBody').innerHTML = finalData.map(d => `
+                <tr class="hover:bg-slate-50 transition-colors">
+                    <td class="p-4 font-bold text-slate-300 text-xs">${d.seq}</td>
+                    <td class="p-4 text-slate-500 text-xs">${d.complexo}</td>
+                    <td class="p-4 font-bold text-slate-700">${d.turbina}</td>
+                    <td class="p-4 text-xs">${fmt(atividade === 'anual' ? d.data_ultima : d.data_anual)}</td>
+                    <td class="p-4 text-xs font-bold text-blue-600">${fmt(atividade === 'anual' ? d.data_anual : d.data_semestral)}</td>
+                    <td class="p-4 text-center font-black bg-slate-50 text-xs">${d[`${atividade}_dias`]}</td>
+                    <td class="p-4">
+                        <span class="status-badge ${d[`${atividade}_status`] === 'COMPLIANT' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}">
+                            ${d[`${atividade}_status`]}
+                        </span>
+                    </td>
+                </tr>
+            `).join('');
+            updateChart(cCount, nCount);
+        }
+
+        function fmt(v) { return v ? new Date(v).toLocaleDateString('pt-BR') : "-"; }
+
+        function updateChart(c, n) {
+            const ctx = document.getElementById('chartOTD').getContext('2d');
+            if (chart) chart.destroy();
+            chart = new Chart(ctx, {
+                type: 'doughnut',
+                data: { datasets: [{ data: [c, n], backgroundColor: ['#22c55e', '#ef4444'], borderWidth: 0 }] },
+                options: { maintainAspectRatio: false, cutout: '80%' }
+            });
+        }
+
+        async function gerarPDF(comGantt) {
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF('l', 'pt', 'a4');
+            const atividade = document.getElementById('filterAtividade').value;
+            
+            doc.setFontSize(14);
+            doc.text(`RELATÓRIO DE PERFORMANCE OTD - ${atividade.toUpperCase()}`, 40, 40);
+            
+            const rows = [];
+            document.querySelectorAll("#tableBody tr").forEach(tr => {
+                const cols = [];
+                tr.querySelectorAll("td").forEach(td => cols.push(td.innerText));
+                rows.push(cols);
+            });
+
+            doc.autoTable({
+                head: [['Seq', 'Complexo', 'Turbina', 'Data A', 'Data B', 'Dias', 'Status']],
+                body: rows,
+                startY: 60,
+                theme: 'grid',
+                headStyles: { fillColor: [71, 85, 105], fontSize: 8 },
+                styles: { fontSize: 7 }
+            });
+
+            if (comGantt) {
+                doc.addPage();
+                doc.text("CRONOGRAMA GANTT (SEQUÊNCIA OPERACIONAL)", 40, 40);
+                let y = 70;
+                
+                rows.slice(0, 30).forEach(row => { // Primeiras 30 turbinas para o exemplo
+                    doc.setFontSize(7);
+                    doc.text(`${row[2]}`, 40, y);
+                    
+                    const dias = parseInt(row[5]);
+                    const largura = Math.min(dias * 2, 400);
+                    const cor = row[6] === 'COMPLIANT' ? [34, 197, 94] : [239, 68, 68];
+                    
+                    doc.setFillColor(cor[0], cor[1], cor[2]);
+                    doc.rect(120, y - 6, largura, 8, 'F');
+                    y += 15;
+                    if(y > 550) { doc.addPage(); y = 60; }
+                });
+            }
+
+            doc.save(`OTD_Relatorio_${atividade}.pdf`);
+        }
+
+        function filtrarStatus(s) { statusFilter = (statusFilter === s) ? 'todos' : s; render(); }
+        function resetar() { 
+            statusFilter = 'todos'; 
+            document.getElementById('filterComplexo').value = 'todos'; 
+            document.getElementById('searchTurbina').value = '';
+            render(); 
+        }
+    </script>
+</body>
+</html>
